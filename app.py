@@ -1,239 +1,267 @@
 from flask import Flask, request, render_template_string
 import base64
+import codecs
 import html
 import json
+import quopri
 import urllib.parse
-import re
 
 app = Flask(__name__)
 
-CHARSETS = {
-    "utf-8": "UTF-8",
-    "utf-16-le": "UTF-16 LE",
-    "utf-16-be": "UTF-16 BE",
-    "utf-32-le": "UTF-32 LE",
-    "utf-32-be": "UTF-32 BE",
-    "ascii": "ASCII",
-    "iso-8859-1": "ISO-8859-1 / Latin-1",
-    "iso-8859-2": "ISO-8859-2",
-    "iso-8859-7": "ISO-8859-7",
-    "cp1252": "Windows-1252",
-    "cp1251": "Windows-1251",
-    "shift_jis": "Shift_JIS",
-    "euc_jp": "EUC-JP",
-    "gb2312": "GB2312",
-    "gbk": "GBK",
-    "gb18030": "GB18030",
-    "big5": "Big5",
-    "euc_kr": "EUC-KR",
-}
+CHARSETS = [
+    "UTF-8",
+    "UTF-16 LE",
+    "UTF-16 BE",
+    "UTF-32 LE",
+    "UTF-32 BE",
+    "ASCII",
+    "ISO-8859-1",
+    "ISO-8859-2",
+    "ISO-8859-7",
+    "Windows-1252",
+    "Windows-1251",
+    "Shift_JIS",
+    "EUC-JP",
+    "GB2312",
+    "GBK",
+    "GB18030",
+    "Big5",
+    "EUC-KR",
+]
 
-METHODS = {
-    "q": "Quoted-Printable / RFC 2047 Q",
-    "base64": "Base64 / RFC 2047 B",
-    "url": "URL / Percent Encoding",
-    "html": "HTML Entity Encoding",
-    "hex": "Hexadecimal",
-    "unicode": "Unicode Escape",
-    "json": "JSON Unicode Escape",
-    "punycode": "Punycode",
-}
-
-CODECS = {
-    key: key for key in CHARSETS
-}
+FORMATS = [
+    "RFC 2047 Q",
+    "Base64",
+    "Quoted-Printable",
+    "URL / Percent",
+    "HTML Entity",
+    "Hexadecimal",
+    "Unicode Escape",
+    "JSON Unicode Escape",
+    "Punycode",
+]
 
 
-def add_spaces_after_words(text, count):
-    if count <= 0:
-        return text
+def normalize_charset(name):
+    aliases = {
+        "UTF-8": "utf-8",
+        "UTF-16 LE": "utf-16-le",
+        "UTF-16 BE": "utf-16-be",
+        "UTF-32 LE": "utf-32-le",
+        "UTF-32 BE": "utf-32-be",
+        "ASCII": "ascii",
+        "ISO-8859-1": "iso-8859-1",
+        "ISO-8859-2": "iso-8859-2",
+        "ISO-8859-7": "iso-8859-7",
+        "Windows-1252": "cp1252",
+        "Windows-1251": "cp1251",
+        "Shift_JIS": "shift_jis",
+        "EUC-JP": "euc_jp",
+        "GB2312": "gb2312",
+        "GBK": "gbk",
+        "GB18030": "gb18030",
+        "Big5": "big5",
+        "EUC-KR": "euc_kr",
+    }
+    return aliases.get(name, "utf-8")
 
-    return re.sub(
-        r"(\S+)(?=\s|$)",
-        lambda m: m.group(1) + (" " * count),
-        text
-    )
 
+def q_encode_character(ch, charset, encode_space):
+    """
+    RFC-2047-style Q encoding.
 
-def q_encode_bytes(data, space_hex=False):
+    Printable ASCII letters/numbers and selected punctuation remain readable.
+    Other bytes become =XX.
+    Spaces can be represented as _ or =20.
+    """
+    try:
+        data = ch.encode(charset)
+    except (UnicodeEncodeError, LookupError):
+        data = ch.encode("utf-8")
+
     result = []
 
-    for b in data:
-        if b == 0x20:
-            result.append("=20" if space_hex else "_")
+    for byte in data:
+        char = chr(byte)
+
+        if byte == 0x20:
+            result.append("=20" if encode_space else "_")
+        elif (
+            33 <= byte <= 126
+            and char not in "=?_"
+        ):
+            result.append(char)
         else:
-            result.append(f"={b:02X}")
+            result.append(f"={byte:02X}")
 
     return "".join(result)
 
 
-def encode_q(text, charset, space_hex=False):
-    data = text.encode(CODECS[charset])
-
-    encoded = q_encode_bytes(
-        data,
-        space_hex
+def rfc2047_q(text, charset, encode_space):
+    encoded = "".join(
+        q_encode_character(ch, charset, encode_space)
+        for ch in text
     )
 
-    return (
-        f"=?{charset.upper()}?Q?"
-        f"{encoded}"
-        f"?="
-    )
+    return f"=?{charset}?Q?{encoded}?="
 
 
 def encode_base64(text, charset):
-    data = text.encode(CODECS[charset])
+    try:
+        raw = text.encode(charset)
+    except UnicodeEncodeError:
+        raw = text.encode("utf-8")
 
-    encoded = base64.b64encode(
-        data
-    ).decode("ascii")
-
-    return (
-        f"=?{charset.upper()}?B?"
-        f"{encoded}"
-        f"?="
-    )
+    return base64.b64encode(raw).decode("ascii")
 
 
-def encode_other(text, charset, method):
+def encode_quoted_printable(text, charset, encode_space):
+    try:
+        raw = text.encode(charset)
+    except UnicodeEncodeError:
+        raw = text.encode("utf-8")
 
-    data = text.encode(CODECS[charset])
+    result = []
 
-    if method == "url":
-        return urllib.parse.quote(
-            text,
-            safe=""
-        )
+    for byte in raw:
+        if byte == 0x20 and encode_space:
+            result.append("=20")
+        elif 33 <= byte <= 126 and byte != 61:
+            result.append(chr(byte))
+        elif byte == 0x20:
+            result.append(" ")
+        else:
+            result.append(f"={byte:02X}")
 
-    if method == "html":
-        return html.escape(text)
-
-    if method == "hex":
-        return data.hex(" ")
-
-    if method == "unicode":
-        return "".join(
-            f"\\u{ord(c):04X}"
-            for c in text
-        )
-
-    if method == "json":
-        return json.dumps(
-            text,
-            ensure_ascii=True
-        )
-
-    if method == "punycode":
-        return text.encode(
-            "punycode"
-        ).decode("ascii")
-
-    raise ValueError(
-        "Unsupported encoding method"
-    )
+    return "".join(result)
 
 
-def encode_text(
-    text,
-    charset,
-    method,
-    space_hex
-):
-    if method == "q":
-        return encode_q(
-            text,
-            charset,
-            space_hex
-        )
+def encode_text(text, charset, fmt, encode_space=False):
+    if not text:
+        return ""
 
-    if method == "base64":
-        return encode_base64(
-            text,
-            charset
-        )
+    if fmt == "RFC 2047 Q":
+        return rfc2047_q(text, charset, encode_space)
 
-    return encode_other(
-        text,
-        charset,
-        method
-    )
+    if fmt == "Base64":
+        return encode_base64(text, charset)
+
+    if fmt == "Quoted-Printable":
+        return encode_quoted_printable(text, charset, encode_space)
+
+    if fmt == "URL / Percent":
+        return urllib.parse.quote(text, safe="")
+
+    if fmt == "HTML Entity":
+        return html.escape(text, quote=True)
+
+    if fmt == "Hexadecimal":
+        try:
+            raw = text.encode(charset)
+        except UnicodeEncodeError:
+            raw = text.encode("utf-8")
+
+        return "".join(f"{b:02X}" for b in raw)
+
+    if fmt == "Unicode Escape":
+        return "".join(f"\\u{ord(ch):04X}" for ch in text)
+
+    if fmt == "JSON Unicode Escape":
+        return json.dumps(text, ensure_ascii=True)[1:-1]
+
+    if fmt == "Punycode":
+        try:
+            return text.encode("punycode").decode("ascii")
+        except Exception:
+            return text
+
+    return text
 
 
-def encode_selected_items(
+def apply_selected_encoding(
     text,
     selected_items,
     charset,
-    method,
-    space_hex
+    fmt,
+    encode_space=False,
+    spaces_after_word=0
 ):
     """
-    Encodes only the words/characters entered
-    in the selected-items field.
-
-    Items are separated by commas.
+    Encode only selected words/characters.
 
     Example:
-        Clean,Today,!
+        text = "Clean Fridge Today!"
+        selected = ["Clean", "Today", "!"]
+
+    The unselected text remains unchanged.
     """
 
-    if not selected_items.strip():
-        return text
+    if not selected_items:
+        return encode_text(
+            text,
+            charset,
+            fmt,
+            encode_space
+        )
 
-    items = [
-        x.strip()
-        for x in selected_items.split(",")
-        if x.strip()
-    ]
-
-    if not items:
-        return text
-
-    # Longest first prevents a shorter item
-    # from being matched before a longer item.
-    items.sort(
+    # Longer selections first prevents partial matches.
+    selected_items = sorted(
+        [x for x in selected_items if x],
         key=len,
         reverse=True
     )
 
-    pattern = "|".join(
-        re.escape(item)
-        for item in items
-    )
+    result = []
+    i = 0
 
-    regex = re.compile(pattern)
+    while i < len(text):
+        matched = None
 
-    def replacement(match):
-        value = match.group(0)
+        for item in selected_items:
+            if text.startswith(item, i):
+                matched = item
+                break
 
-        return encode_text(
-            value,
-            charset,
-            method,
-            space_hex
-        )
+        if matched is not None:
+            encoded = encode_text(
+                matched,
+                charset,
+                fmt,
+                encode_space
+            )
 
-    return regex.sub(
-        replacement,
-        text
-    )
+            result.append(encoded)
+
+            if spaces_after_word > 0:
+                # Add the requested number of spaces after
+                # each selected word.
+                if fmt == "RFC 2047 Q":
+                    if encode_space:
+                        result.append("=20" * spaces_after_word)
+                    else:
+                        result.append("_" * spaces_after_word)
+                else:
+                    result.append(" " * spaces_after_word)
+
+            i += len(matched)
+
+        else:
+            result.append(text[i])
+            i += 1
+
+    return "".join(result)
 
 
-HTML = r"""
+PAGE = r"""
 <!DOCTYPE html>
-
-<html>
+<html lang="en">
 
 <head>
 
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
-<title>Email Encoding Tool</title>
+<title>Encoding Tool</title>
 
 <style>
 
@@ -243,111 +271,524 @@ HTML = r"""
 
 body {
     margin: 0;
-    padding: 30px;
-    background: #f2f3f5;
-    font-family: Arial, sans-serif;
+    min-height: 100vh;
+    font-family: Arial, Helvetica, sans-serif;
+
+    background:
+        radial-gradient(
+            circle at 15% 20%,
+            rgba(99,102,241,.30),
+            transparent 30%
+        ),
+        radial-gradient(
+            circle at 85% 25%,
+            rgba(14,165,233,.25),
+            transparent 30%
+        ),
+        radial-gradient(
+            circle at 50% 90%,
+            rgba(168,85,247,.20),
+            transparent 35%
+        ),
+        linear-gradient(
+            135deg,
+            #0f172a,
+            #111827 45%,
+            #1e1b4b
+        );
+
+    background-attachment: fixed;
+    color: #e5e7eb;
+
+    transition:
+        background .35s ease,
+        color .35s ease;
+}
+
+body::before {
+    content: "";
+    position: fixed;
+
+    width: 400px;
+    height: 400px;
+
+    left: -150px;
+    top: -150px;
+
+    background:
+        radial-gradient(
+            circle,
+            rgba(59,130,246,.25),
+            transparent 70%
+        );
+
+    filter: blur(30px);
+
+    animation:
+        floatingGlow 8s
+        ease-in-out
+        infinite
+        alternate;
+
+    pointer-events: none;
+    z-index: -1;
+}
+
+@keyframes floatingGlow {
+
+    from {
+        transform:
+            translate(0,0)
+            scale(1);
+    }
+
+    to {
+        transform:
+            translate(180px,120px)
+            scale(1.25);
+    }
 }
 
 .container {
-    max-width: 1000px;
-    margin: auto;
-    background: white;
+
+    width: min(950px, 92%);
+    margin: 45px auto;
+
     padding: 30px;
-    border-radius: 10px;
-    box-shadow: 0 3px 15px rgba(0,0,0,.12);
+
+    background:
+        rgba(255,255,255,.08);
+
+    border:
+        1px solid
+        rgba(255,255,255,.15);
+
+    border-radius: 22px;
+
+    backdrop-filter:
+        blur(18px);
+
+    -webkit-backdrop-filter:
+        blur(18px);
+
+    box-shadow:
+        0 20px 60px
+        rgba(0,0,0,.35),
+
+        inset 0 1px 0
+        rgba(255,255,255,.08);
+
+    transition:
+        background .35s ease,
+        border .35s ease;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 25px;
 }
 
 h1 {
-    margin-top: 0;
+    margin: 0;
+    font-size: 30px;
+}
+
+.subtitle {
+    margin-top: 6px;
+    color: #a5b4fc;
+    font-size: 14px;
+}
+
+.theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.theme-toggle button {
+    padding: 9px 15px;
+    border: 0;
+    border-radius: 10px;
+    cursor: pointer;
+
+    background: #ffffff;
+    color: #111827;
+
+    font-size: 14px;
+
+    transition:
+        transform .2s,
+        background .2s;
+}
+
+.theme-toggle button:hover {
+    transform: translateY(-2px);
 }
 
 label {
     display: block;
+    margin: 18px 0 8px;
     font-weight: bold;
-    margin-top: 18px;
-    margin-bottom: 7px;
+    font-size: 14px;
 }
 
 textarea,
-select,
-input[type="number"],
-input[type="text"] {
+input,
+select {
+
     width: 100%;
-    padding: 11px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    font-size: 15px;
+
+    padding: 12px 14px;
+
+    border-radius: 11px;
+
+    border:
+        1px solid
+        rgba(255,255,255,.16);
+
+    background:
+        rgba(0,0,0,.20);
+
+    color: #ffffff;
+
+    outline: none;
+
+    font-size: 14px;
+
+    transition:
+        border .2s,
+        box-shadow .2s;
 }
 
 textarea {
-    min-height: 140px;
+    min-height: 130px;
     resize: vertical;
 }
 
-input[type="radio"],
-input[type="checkbox"] {
-    margin-right: 7px;
+textarea:focus,
+input:focus,
+select:focus {
+
+    border-color:
+        #818cf8;
+
+    box-shadow:
+        0 0 0 3px
+        rgba(129,140,248,.15);
 }
 
-.box {
+select option {
+    background: #111827;
+    color: white;
+}
+
+.row {
+
+    display: grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap: 18px;
+}
+
+.options {
+
     margin-top: 20px;
-    padding: 17px;
-    background: #f7f7f7;
-    border-radius: 7px;
+
+    padding: 18px;
+
+    border-radius: 15px;
+
+    background:
+        rgba(0,0,0,.12);
+
+    border:
+        1px solid
+        rgba(255,255,255,.08);
 }
 
-.option {
-    margin: 10px 0;
+.radio-row {
+
+    display: flex;
+
+    flex-wrap: wrap;
+
+    gap: 18px;
+
+    margin-top: 10px;
 }
 
-.option label {
-    display: inline;
+.radio-row label {
+
     margin: 0;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 7px;
+
     font-weight: normal;
 }
 
-button {
-    margin-top: 20px;
-    padding: 12px 22px;
+.radio-row input {
+    width: auto;
+}
+
+.checkbox {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+    margin-top: 14px;
+}
+
+.checkbox input {
+    width: auto;
+}
+
+button.encode {
+
+    width: 100%;
+
+    margin-top: 25px;
+
+    padding: 14px;
+
     border: 0;
-    border-radius: 5px;
-    background: #222;
-    color: white;
+
+    border-radius: 12px;
+
     cursor: pointer;
-    font-size: 15px;
+
+    font-size: 16px;
+
+    font-weight: bold;
+
+    color: white;
+
+    background:
+        linear-gradient(
+            135deg,
+            #6366f1,
+            #8b5cf6
+        );
+
+    box-shadow:
+        0 10px 25px
+        rgba(99,102,241,.25);
+
+    transition:
+        transform .2s,
+        box-shadow .2s;
 }
 
-button:hover {
-    opacity: .85;
+button.encode:hover {
+
+    transform:
+        translateY(-2px);
+
+    box-shadow:
+        0 14px 30px
+        rgba(99,102,241,.35);
 }
 
-.copy {
-    background: #555;
-    margin-left: 8px;
+.result {
+
+    margin-top: 25px;
 }
 
-pre {
-    white-space: pre-wrap;
-    word-break: break-all;
-    background: #f1f1f1;
-    padding: 16px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    min-height: 90px;
+.result textarea {
+    min-height: 160px;
 }
 
-.help {
-    color: #666;
-    font-size: 13px;
-    margin-top: 5px;
+.copy-button {
+
+    margin-top: 10px;
+
+    padding: 10px 18px;
+
+    border: 0;
+
+    border-radius: 10px;
+
+    cursor: pointer;
+
+    background: #22c55e;
+
+    color: white;
+
+    font-weight: bold;
 }
 
-.error {
+.stats {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(3,1fr);
+
+    gap: 12px;
+
     margin-top: 15px;
-    padding: 12px;
-    background: #ffe8e8;
-    color: #9b0000;
-    border-radius: 5px;
+}
+
+.stat {
+
+    padding: 14px;
+
+    border-radius: 12px;
+
+    background:
+        rgba(255,255,255,.06);
+
+    border:
+        1px solid
+        rgba(255,255,255,.08);
+}
+
+.stat-title {
+
+    font-size: 12px;
+
+    color: #94a3b8;
+
+    margin-bottom: 5px;
+}
+
+.stat-value {
+
+    font-size: 14px;
+
+    font-weight: bold;
+
+    word-break: break-word;
+}
+
+
+/* WHITE MODE */
+
+body.light-mode {
+
+    background:
+        radial-gradient(
+            circle at 15% 20%,
+            rgba(99,102,241,.12),
+            transparent 30%
+        ),
+        radial-gradient(
+            circle at 85% 25%,
+            rgba(14,165,233,.10),
+            transparent 30%
+        ),
+        linear-gradient(
+            135deg,
+            #f8fafc,
+            #eef2ff,
+            #f0f9ff
+        );
+
+    color: #111827;
+}
+
+body.light-mode .container {
+
+    background:
+        rgba(255,255,255,.82);
+
+    border:
+        1px solid
+        rgba(0,0,0,.08);
+
+    box-shadow:
+        0 20px 60px
+        rgba(0,0,0,.10);
+}
+
+body.light-mode textarea,
+body.light-mode input,
+body.light-mode select {
+
+    background:
+        rgba(255,255,255,.9);
+
+    color: #111827;
+
+    border-color:
+        rgba(0,0,0,.12);
+}
+
+body.light-mode select option {
+
+    background: white;
+    color: #111827;
+}
+
+body.light-mode .options {
+
+    background:
+        rgba(0,0,0,.035);
+
+    border-color:
+        rgba(0,0,0,.07);
+}
+
+body.light-mode .subtitle {
+    color: #4f46e5;
+}
+
+body.light-mode .stat {
+
+    background:
+        rgba(0,0,0,.035);
+
+    border-color:
+        rgba(0,0,0,.07);
+}
+
+body.light-mode .stat-title {
+    color: #64748b;
+}
+
+body.light-mode .theme-toggle button {
+
+    background: #111827;
+    color: white;
+}
+
+
+/* MOBILE */
+
+@media (max-width: 700px) {
+
+    .container {
+        padding: 20px;
+        margin: 20px auto;
+    }
+
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .row {
+        grid-template-columns: 1fr;
+    }
+
+    .stats {
+        grid-template-columns: 1fr;
+    }
+
+    h1 {
+        font-size: 24px;
+    }
 }
 
 </style>
@@ -359,299 +800,423 @@ pre {
 
 <div class="container">
 
-<h1>Email Encoding Tool</h1>
+    <div class="header">
+
+        <div>
+
+            <h1>Encoding Tool</h1>
+
+            <div class="subtitle">
+                Character and text encoding utility
+            </div>
+
+        </div>
+
+        <div class="theme-toggle">
+
+            <span id="themeLabel">
+                Dark Mode
+            </span>
+
+            <button
+                type="button"
+                id="themeButton"
+                onclick="toggleTheme()">
+
+                ☀️ White Mode
+
+            </button>
+
+        </div>
+
+    </div>
 
 
-<form method="POST">
+    <form method="POST">
+
+        <label>
+            Input Text
+        </label>
+
+        <textarea
+            name="text"
+            placeholder="Enter your sentence here..."
+            required>{{ text }}</textarea>
 
 
-<label>
-Input sentence
-</label>
+        <div class="row">
 
-<textarea
-    name="text"
-    placeholder="Example: Clean Fridge Today!"
->{{ text }}</textarea>
+            <div>
+
+                <label>
+                    Character Encoding
+                </label>
+
+                <select name="charset">
+
+                    {% for c in charsets %}
+
+                    <option
+                        value="{{ c }}"
+                        {% if charset == c %}
+                        selected
+                        {% endif %}>
+
+                        {{ c }}
+
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+            </div>
 
 
-<label>
-Character Encoding
-</label>
+            <div>
 
-<select name="charset">
+                <label>
+                    Encoding Format
+                </label>
 
-{% for key, name in charsets.items() %}
+                <select name="format">
 
-<option
-    value="{{ key }}"
-    {% if charset == key %}
-    selected
+                    {% for f in formats %}
+
+                    <option
+                        value="{{ f }}"
+                        {% if fmt == f %}
+                        selected
+                        {% endif %}>
+
+                        {{ f }}
+
+                    </option>
+
+                    {% endfor %}
+
+                </select>
+
+            </div>
+
+        </div>
+
+
+        <div class="options">
+
+            <label>
+                Encoding Selection
+            </label>
+
+            <div class="radio-row">
+
+                <label>
+
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="entire"
+                        {% if mode != "specific" %}
+                        checked
+                        {% endif %}>
+
+                    Encode entire sentence
+
+                </label>
+
+
+                <label>
+
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="specific"
+                        {% if mode == "specific" %}
+                        checked
+                        {% endif %}>
+
+                    Encode specific words / letters / characters
+
+                </label>
+
+            </div>
+
+
+            <label>
+                Specific words / letters / special characters
+            </label>
+
+            <input
+                type="text"
+                name="specific"
+                value="{{ specific }}"
+                placeholder="Example: Clean,Today,!,@,#">
+
+            <small>
+                Separate multiple items with commas.
+            </small>
+
+
+            <label>
+                Spaces after each word
+            </label>
+
+            <input
+                type="number"
+                name="spaces"
+                min="0"
+                value="{{ spaces }}">
+
+
+            <div class="checkbox">
+
+                <input
+                    type="checkbox"
+                    id="encodeSpace"
+                    name="encode_space"
+                    {% if encode_space %}
+                    checked
+                    {% endif %}>
+
+                <label
+                    for="encodeSpace"
+                    style="margin:0;font-weight:normal;">
+
+                    Encode space as =20 (hex) instead of _
+
+                </label>
+
+            </div>
+
+
+            <div class="checkbox">
+
+                <input
+                    type="checkbox"
+                    id="singleLine"
+                    name="single_line"
+                    {% if single_line %}
+                    checked
+                    {% endif %}>
+
+                <label
+                    for="singleLine"
+                    style="margin:0;font-weight:normal;">
+
+                    Single line output
+
+                </label>
+
+            </div>
+
+        </div>
+
+
+        <button
+            class="encode"
+            type="submit">
+
+            Encode
+
+        </button>
+
+    </form>
+
+
+    {% if result %}
+
+    <div class="result">
+
+        <label>
+            Result
+        </label>
+
+        <textarea
+            id="result"
+            readonly>{{ result }}</textarea>
+
+
+        <button
+            class="copy-button"
+            type="button"
+            onclick="copyResult()">
+
+            📋 Copy Result
+
+        </button>
+
+
+        <div class="stats">
+
+            <div class="stat">
+
+                <div class="stat-title">
+                    Character Encoding
+                </div>
+
+                <div class="stat-value">
+                    {{ charset }}
+                </div>
+
+            </div>
+
+
+            <div class="stat">
+
+                <div class="stat-title">
+                    Encoding Format
+                </div>
+
+                <div class="stat-value">
+                    {{ fmt }}
+                </div>
+
+            </div>
+
+
+            <div class="stat">
+
+                <div class="stat-title">
+                    Output Length
+                </div>
+
+                <div class="stat-value">
+                    {{ result|length }}
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
     {% endif %}
->
-{{ name }}
-</option>
-
-{% endfor %}
-
-</select>
-
-
-<label>
-Encoding Format
-</label>
-
-<select name="method">
-
-{% for key, name in methods.items() %}
-
-<option
-    value="{{ key }}"
-    {% if method == key %}
-    selected
-    {% endif %}
->
-{{ name }}
-</option>
-
-{% endfor %}
-
-</select>
-
-
-<div class="box">
-
-<strong>Encoding selection</strong>
-
-
-<div class="option">
-
-<input
-    type="radio"
-    id="encode_all"
-    name="selection_mode"
-    value="all"
-    {% if selection_mode == "all" %}
-    checked
-    {% endif %}
->
-
-<label for="encode_all">
-Encode entire sentence
-</label>
-
-</div>
-
-
-<div class="option">
-
-<input
-    type="radio"
-    id="encode_selected"
-    name="selection_mode"
-    value="selected"
-    {% if selection_mode == "selected" %}
-    checked
-    {% endif %}
->
-
-<label for="encode_selected">
-Encode only specific words / characters
-</label>
-
-</div>
-
-</div>
-
-
-<label>
-Specific words / letters / special characters
-</label>
-
-<input
-    type="text"
-    name="selected_items"
-    value="{{ selected_items }}"
-    placeholder="Example: Clean,Today,!"
->
-
-<div class="help">
-Separate multiple items with commas.
-Example:
-Clean,Today,!,@,# 
-</div>
-
-
-<label>
-Spaces after each word
-</label>
-
-<input
-    type="number"
-    name="spaces_after_word"
-    min="0"
-    max="100"
-    value="{{ spaces_after_word }}"
->
-
-<div class="help">
-Set to 0 if you do not want additional spaces.
-</div>
-
-
-<div class="box">
-
-<div class="option">
-
-<input
-    type="checkbox"
-    name="space_hex"
-    id="space_hex"
-    {% if space_hex %}
-    checked
-    {% endif %}
->
-
-<label for="space_hex">
-Encode space as =20 (hex) instead of _
-</label>
-
-</div>
-
-
-<div class="option">
-
-<input
-    type="checkbox"
-    name="single_line"
-    id="single_line"
-    {% if single_line %}
-    checked
-    {% endif %}
->
-
-<label for="single_line">
-Single line output
-</label>
-
-</div>
-
-</div>
-
-
-<label>
-Encoded Word Length
-</label>
-
-<input
-    type="number"
-    name="word_length"
-    min="10"
-    max="998"
-    value="{{ word_length }}"
->
-
-
-<button type="submit">
-Encode
-</button>
-
-
-</form>
-
-
-{% if result is not none %}
-
-<label>
-Result
-</label>
-
-<pre id="result">{{ result }}</pre>
-
-<button
-    type="button"
-    class="copy"
-    onclick="copyResult()"
->
-Copy Result
-</button>
-
-
-<div class="box">
-
-<strong>Encoding:</strong>
-{{ method_name }}
-
-<br>
-
-<strong>Character set:</strong>
-{{ charset_name }}
-
-<br>
-
-<strong>Selection mode:</strong>
-{{ selection_mode }}
-
-<br>
-
-<strong>Selected items:</strong>
-{{ selected_items if selected_items else "None" }}
-
-<br>
-
-<strong>Spaces after each word:</strong>
-{{ spaces_after_word }}
-
-<br>
-
-<strong>Output length:</strong>
-{{ output_length }}
-
-</div>
-
-{% endif %}
-
-
-{% if error %}
-
-<div class="error">
-{{ error }}
-</div>
-
-{% endif %}
-
 
 </div>
 
 
 <script>
 
+function toggleTheme() {
+
+    const body =
+        document.body;
+
+    const button =
+        document.getElementById(
+            "themeButton"
+        );
+
+    const label =
+        document.getElementById(
+            "themeLabel"
+        );
+
+
+    body.classList.toggle(
+        "light-mode"
+    );
+
+
+    if (
+        body.classList.contains(
+            "light-mode"
+        )
+    ) {
+
+        button.innerHTML =
+            "🌙 Dark Mode";
+
+        label.innerHTML =
+            "White Mode";
+
+        localStorage.setItem(
+            "theme",
+            "light"
+        );
+
+    } else {
+
+        button.innerHTML =
+            "☀️ White Mode";
+
+        label.innerHTML =
+            "Dark Mode";
+
+        localStorage.setItem(
+            "theme",
+            "dark"
+        );
+    }
+}
+
+
+window.addEventListener(
+    "DOMContentLoaded",
+    function () {
+
+        const savedTheme =
+            localStorage.getItem(
+                "theme"
+            );
+
+        if (
+            savedTheme === "light"
+        ) {
+
+            document.body.classList.add(
+                "light-mode"
+            );
+
+            document.getElementById(
+                "themeButton"
+            ).innerHTML =
+                "🌙 Dark Mode";
+
+            document.getElementById(
+                "themeLabel"
+            ).innerHTML =
+                "White Mode";
+        }
+    }
+);
+
+
 function copyResult() {
 
     const result =
-        document.getElementById("result");
+        document.getElementById(
+            "result"
+        );
 
-    if (!result) {
-        return;
-    }
+    navigator.clipboard.writeText(
+        result.value
+    ).then(function () {
 
-    navigator.clipboard
-        .writeText(result.innerText)
-        .then(function() {
+        const button =
+            document.querySelector(
+                ".copy-button"
+            );
 
-            alert("Result copied!");
+        const original =
+            button.innerHTML;
 
-        })
-        .catch(function() {
+        button.innerHTML =
+            "✓ Copied";
 
-            alert("Copy failed.");
+        setTimeout(
+            function () {
+                button.innerHTML =
+                    original;
+            },
+            1500
+        );
 
-        });
+    });
 
 }
 
 </script>
-
 
 </body>
 
@@ -659,34 +1224,18 @@ function copyResult() {
 """
 
 
-@app.route(
-    "/",
-    methods=["GET", "POST"]
-)
+@app.route("/", methods=["GET", "POST"])
 def index():
 
     text = ""
-
-    charset = "utf-8"
-
-    method = "q"
-
-    selection_mode = "all"
-
-    selected_items = ""
-
-    spaces_after_word = 0
-
-    space_hex = False
-
+    charset = "UTF-8"
+    fmt = "RFC 2047 Q"
+    mode = "entire"
+    specific = ""
+    spaces = 0
+    encode_space = False
     single_line = True
-
-    word_length = 75
-
-    result = None
-
-    error = None
-
+    result = ""
 
     if request.method == "POST":
 
@@ -697,200 +1246,101 @@ def index():
 
         charset = request.form.get(
             "charset",
-            "utf-8"
+            "UTF-8"
         )
 
-        method = request.form.get(
-            "method",
-            "q"
+        fmt = request.form.get(
+            "format",
+            "RFC 2047 Q"
         )
 
-        selection_mode = request.form.get(
-            "selection_mode",
-            "all"
+        mode = request.form.get(
+            "mode",
+            "entire"
         )
 
-        selected_items = request.form.get(
-            "selected_items",
+        specific = request.form.get(
+            "specific",
             ""
         )
 
-        space_hex = (
+        try:
+            spaces = int(
+                request.form.get(
+                    "spaces",
+                    "0"
+                )
+            )
+        except ValueError:
+            spaces = 0
+
+        encode_space = (
             request.form.get(
-                "space_hex"
-            ) == "on"
+                "encode_space"
+            )
+            == "on"
         )
 
         single_line = (
             request.form.get(
                 "single_line"
-            ) == "on"
+            )
+            == "on"
         )
 
+        if mode == "specific":
 
-        try:
+            selected_items = [
+                item.strip()
+                for item in specific.split(",")
+                if item.strip()
+            ]
 
-            spaces_after_word = int(
-                request.form.get(
-                    "spaces_after_word",
-                    "0"
-                )
+            result = apply_selected_encoding(
+                text,
+                selected_items,
+                charset,
+                fmt,
+                encode_space,
+                spaces
             )
 
-        except ValueError:
+        else:
 
-            spaces_after_word = 0
-
-
-        try:
-
-            word_length = int(
-                request.form.get(
-                    "word_length",
-                    "75"
-                )
+            result = encode_text(
+                text,
+                charset,
+                fmt,
+                encode_space
             )
 
-        except ValueError:
+        if single_line:
 
-            word_length = 75
-
-
-        spaces_after_word = max(
-            0,
-            min(
-                spaces_after_word,
-                100
+            result = (
+                result
+                .replace("\r", "")
+                .replace("\n", "")
             )
-        )
-
-
-        try:
-
-            # ------------------------------------------------
-            # SELECTIVE MODE
-            # ------------------------------------------------
-
-            if selection_mode == "selected":
-
-                # Add requested spaces first.
-                processed_text = (
-                    add_spaces_after_words(
-                        text,
-                        spaces_after_word
-                    )
-                )
-
-                result = encode_selected_items(
-                    processed_text,
-                    selected_items,
-                    charset,
-                    method,
-                    space_hex
-                )
-
-
-            # ------------------------------------------------
-            # ENCODE EVERYTHING
-            # ------------------------------------------------
-
-            else:
-
-                processed_text = (
-                    add_spaces_after_words(
-                        text,
-                        spaces_after_word
-                    )
-                )
-
-                result = encode_text(
-                    processed_text,
-                    charset,
-                    method,
-                    space_hex
-                )
-
-
-            # ------------------------------------------------
-            # SINGLE LINE
-            # ------------------------------------------------
-
-            if single_line:
-
-                result = result.replace(
-                    "\r",
-                    ""
-                ).replace(
-                    "\n",
-                    ""
-                )
-
-
-        except UnicodeEncodeError:
-
-            error = (
-                "The selected character encoding "
-                "cannot represent one or more "
-                "characters in the input."
-            )
-
-        except Exception as exc:
-
-            error = str(exc)
-
 
     return render_template_string(
-
-        HTML,
-
+        PAGE,
         text=text,
-
         charset=charset,
-
-        method=method,
-
-        selection_mode=selection_mode,
-
-        selected_items=selected_items,
-
-        spaces_after_word=spaces_after_word,
-
-        space_hex=space_hex,
-
+        fmt=fmt,
+        mode=mode,
+        specific=specific,
+        spaces=spaces,
+        encode_space=encode_space,
         single_line=single_line,
-
-        word_length=word_length,
-
         result=result,
-
-        error=error,
-
         charsets=CHARSETS,
-
-        methods=METHODS,
-
-        charset_name=CHARSETS.get(
-            charset,
-            charset
-        ),
-
-        method_name=METHODS.get(
-            method,
-            method
-        ),
-
-        output_length=(
-            len(result)
-            if result is not None
-            else 0
-        )
+        formats=FORMATS
     )
 
 
 if __name__ == "__main__":
-
     app.run(
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=5000,
-        debug=True
+        debug=False
     )
