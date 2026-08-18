@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string
+import os
 import base64
 import html
 import json
@@ -6,8 +6,26 @@ import urllib.parse
 import re
 import random
 
+from flask import (
+    Flask,
+    request,
+    render_template_string,
+    redirect,
+    url_for,
+    session
+)
+
 
 app = Flask(__name__)
+
+# ============================================================
+# SECRET KEY
+# ============================================================
+
+app.secret_key = os.environ.get(
+    "SECRET_KEY",
+    "change-this-secret-key"
+)
 
 
 # ============================================================
@@ -51,6 +69,10 @@ METHODS = {
     "punycode": "Punycode",
 }
 
+
+# ============================================================
+# CODECS
+# ============================================================
 
 CODECS = {
     key: key
@@ -160,6 +182,10 @@ def encode_other(
         CODECS[charset]
     )
 
+    # --------------------------------------------------------
+    # URL
+    # --------------------------------------------------------
+
     if method == "url":
 
         return urllib.parse.quote(
@@ -167,15 +193,27 @@ def encode_other(
             safe=""
         )
 
+    # --------------------------------------------------------
+    # HTML
+    # --------------------------------------------------------
+
     if method == "html":
 
         return html.escape(
             text
         )
 
+    # --------------------------------------------------------
+    # HEX
+    # --------------------------------------------------------
+
     if method == "hex":
 
         return data.hex(" ")
+
+    # --------------------------------------------------------
+    # UNICODE
+    # --------------------------------------------------------
 
     if method == "unicode":
 
@@ -184,12 +222,20 @@ def encode_other(
             for c in text
         )
 
+    # --------------------------------------------------------
+    # JSON
+    # --------------------------------------------------------
+
     if method == "json":
 
         return json.dumps(
             text,
             ensure_ascii=True
         )
+
+    # --------------------------------------------------------
+    # PUNYCODE
+    # --------------------------------------------------------
 
     if method == "punycode":
 
@@ -237,9 +283,6 @@ def encode_text(
 
 # ============================================================
 # ENCODE SELECTED ITEMS
-#
-# Normal selected mode:
-# Every matching selected item is encoded.
 # ============================================================
 
 def encode_selected_items(
@@ -298,17 +341,6 @@ def encode_selected_items(
 
 # ============================================================
 # RANDOMLY ENCODE SELECTED ITEMS
-#
-# If selected_items contains values:
-#     Clean,Today,!,@
-#
-# only random occurrences of those values are encoded.
-#
-# If selected_items is empty:
-# automatically finds words in the complete sentence and
-# randomly encodes some of them.
-#
-# A new random decision is made on EVERY Encode click.
 # ============================================================
 
 def encode_random_selected_items(
@@ -332,7 +364,6 @@ def encode_random_selected_items(
         )
     )
 
-
     # ========================================================
     # CASE 1
     # SPECIFIC ITEMS WERE ENTERED
@@ -350,8 +381,6 @@ def encode_random_selected_items(
 
             return text
 
-        # Longest first so that multi-character items are
-        # matched before shorter items.
         items.sort(
             key=len,
             reverse=True
@@ -370,7 +399,6 @@ def encode_random_selected_items(
 
             value = match.group(0)
 
-            # New random number for every occurrence.
             chance = random.randint(
                 1,
                 100
@@ -392,12 +420,9 @@ def encode_random_selected_items(
             text
         )
 
-
     # ========================================================
     # CASE 2
     # NO SPECIFIC ITEMS
-    #
-    # Automatically find words in the entire sentence.
     # ========================================================
 
     word_pattern = r"\b[\w]+\b"
@@ -406,7 +431,7 @@ def encode_random_selected_items(
 
         value = match.group(0)
 
-        # Do not encode one-character words automatically.
+        # Do not encode one-character words.
         if len(value) <= 1:
 
             return value
@@ -1291,7 +1316,10 @@ body.light-mode .error {
 <div class="left-panel">
 
 
-<form method="POST">
+<form
+    method="POST"
+    id="encodeForm"
+>
 
 
 <label>
@@ -1359,10 +1387,6 @@ Encoding selection
 </strong>
 
 
-<!-- ======================================================
-     OPTION 1 - ENTIRE SENTENCE
-     ====================================================== -->
-
 <div class="option">
 
 <input
@@ -1383,10 +1407,6 @@ Encode entire sentence
 </div>
 
 
-<!-- ======================================================
-     OPTION 2 - SPECIFIC ITEMS
-     ====================================================== -->
-
 <div class="option">
 
 <input
@@ -1406,10 +1426,6 @@ Encode only specific words / characters
 
 </div>
 
-
-<!-- ======================================================
-     OPTION 3 - RANDOM
-     ====================================================== -->
 
 <div class="option">
 
@@ -1445,9 +1461,9 @@ the complete sentence are automatically selected.
 </div>
 
 
-<!-- ======================================================
+<!-- ========================================================
      RANDOM PERCENTAGE
-     ====================================================== -->
+     ======================================================== -->
 
 <div
     class="random-settings"
@@ -1622,7 +1638,10 @@ Maximum encoded word length setting.
      ENCODE BUTTON
      ======================================================== -->
 
-<button type="submit">
+<button
+    type="submit"
+    id="encodeButton"
+>
 Encode
 </button>
 
@@ -1813,7 +1832,6 @@ function copyResult() {
     if (!result) {
         return;
     }
-
 
     const text =
         result.innerText;
@@ -2013,11 +2031,6 @@ function toggleTheme() {
 
 /* ==========================================================
    RANDOM SETTINGS UI
-   ==========================================================
-   
-   Random settings remain visible because they are useful
-   for the random mode. The radio buttons control the actual
-   encoding mode on the server.
    ========================================================== */
 
 (function () {
@@ -2078,6 +2091,51 @@ function toggleTheme() {
 
 })();
 
+
+/* ==========================================================
+   PREVENT DOUBLE CLICK / DOUBLE SUBMIT
+   ========================================================== */
+
+(function () {
+
+    const form =
+        document.getElementById(
+            "encodeForm"
+        );
+
+    const button =
+        document.getElementById(
+            "encodeButton"
+        );
+
+    if (!form || !button) {
+        return;
+    }
+
+    let submitted = false;
+
+    form.addEventListener(
+        "submit",
+        function () {
+
+            if (submitted) {
+
+                return;
+
+            }
+
+            submitted = true;
+
+            button.disabled = true;
+
+            button.innerHTML =
+                "Encoding...";
+
+        }
+    );
+
+})();
+
 </script>
 
 
@@ -2088,7 +2146,52 @@ function toggleTheme() {
 
 
 # ============================================================
+# DEFAULT FORM DATA
+# ============================================================
+
+DEFAULT_FORM_DATA = {
+
+    "text": "",
+
+    "charset": "utf-8",
+
+    "method": "q",
+
+    "selection_mode": "all",
+
+    "selected_items": "",
+
+    "spaces_after_word": 0,
+
+    "space_hex": False,
+
+    "single_line": True,
+
+    "word_length": 75,
+
+    "random_percentage": 50,
+}
+
+
+# ============================================================
 # FLASK ROUTE
+#
+# IMPORTANT:
+#
+# POST
+#   ↓
+# Process
+#   ↓
+# Save result to session
+#   ↓
+# Redirect
+#   ↓
+# GET
+#
+# This is called PRG:
+# POST -> Redirect -> GET
+#
+# Therefore browser refresh will NOT resend POST.
 # ============================================================
 
 @app.route(
@@ -2097,65 +2200,59 @@ function toggleTheme() {
 )
 def index():
 
-    text = ""
-
-    charset = "utf-8"
-
-    method = "q"
-
-    selection_mode = "all"
-
-    selected_items = ""
-
-    spaces_after_word = 0
-
-    space_hex = False
-
-    single_line = True
-
-    word_length = 75
-
-    random_percentage = 50
-
-    result = None
-
-    error = None
-
-
     # ========================================================
     # POST
     # ========================================================
 
     if request.method == "POST":
 
+        # ----------------------------------------------------
+        # INPUT TEXT
+        # ----------------------------------------------------
+
         text = request.form.get(
             "text",
             ""
         )
+
+        # ----------------------------------------------------
+        # CHARACTER SET
+        # ----------------------------------------------------
 
         charset = request.form.get(
             "charset",
             "utf-8"
         )
 
+        # ----------------------------------------------------
+        # METHOD
+        # ----------------------------------------------------
+
         method = request.form.get(
             "method",
             "q"
         )
+
+        # ----------------------------------------------------
+        # SELECTION MODE
+        # ----------------------------------------------------
 
         selection_mode = request.form.get(
             "selection_mode",
             "all"
         )
 
+        # ----------------------------------------------------
+        # SELECTED ITEMS
+        # ----------------------------------------------------
+
         selected_items = request.form.get(
             "selected_items",
             ""
         )
 
-
         # ----------------------------------------------------
-        # CHECKBOXES
+        # CHECKBOX: SPACE HEX
         # ----------------------------------------------------
 
         space_hex = (
@@ -2164,15 +2261,18 @@ def index():
             ) == "on"
         )
 
+        # ----------------------------------------------------
+        # CHECKBOX: SINGLE LINE
+        # ----------------------------------------------------
+
         single_line = (
             request.form.get(
                 "single_line"
             ) == "on"
         )
 
-
         # ----------------------------------------------------
-        # SPACES
+        # SPACES AFTER WORD
         # ----------------------------------------------------
 
         try:
@@ -2184,10 +2284,12 @@ def index():
                 )
             )
 
-        except ValueError:
+        except (
+            ValueError,
+            TypeError
+        ):
 
             spaces_after_word = 0
-
 
         # ----------------------------------------------------
         # WORD LENGTH
@@ -2202,10 +2304,12 @@ def index():
                 )
             )
 
-        except ValueError:
+        except (
+            ValueError,
+            TypeError
+        ):
 
             word_length = 75
-
 
         # ----------------------------------------------------
         # RANDOM PERCENTAGE
@@ -2220,14 +2324,16 @@ def index():
                 )
             )
 
-        except ValueError:
+        except (
+            ValueError,
+            TypeError
+        ):
 
             random_percentage = 50
 
-
-        # ----------------------------------------------------
+        # ====================================================
         # LIMIT VALUES
-        # ----------------------------------------------------
+        # ====================================================
 
         spaces_after_word = max(
             0,
@@ -2237,7 +2343,6 @@ def index():
             )
         )
 
-
         word_length = max(
             10,
             min(
@@ -2246,7 +2351,6 @@ def index():
             )
         )
 
-
         random_percentage = max(
             1,
             min(
@@ -2254,7 +2358,6 @@ def index():
                 100
             )
         )
-
 
         # ====================================================
         # VALIDATE SELECTION MODE
@@ -2268,7 +2371,6 @@ def index():
 
             selection_mode = "all"
 
-
         # ====================================================
         # VALIDATE CHARSET
         # ====================================================
@@ -2276,7 +2378,6 @@ def index():
         if charset not in CHARSETS:
 
             charset = "utf-8"
-
 
         # ====================================================
         # VALIDATE METHOD
@@ -2286,10 +2387,13 @@ def index():
 
             method = "q"
 
-
         # ====================================================
         # ENCODE
         # ====================================================
+
+        result = None
+
+        error = None
 
         try:
 
@@ -2304,10 +2408,9 @@ def index():
                 )
             )
 
-
             # =================================================
             # MODE 1
-            # ENCODE ENTIRE SENTENCE
+            # ENTIRE SENTENCE
             # =================================================
 
             if selection_mode == "all":
@@ -2324,10 +2427,9 @@ def index():
 
                 )
 
-
             # =================================================
             # MODE 2
-            # ENCODE SPECIFIC ITEMS
+            # SELECTED ITEMS
             # =================================================
 
             elif selection_mode == "selected":
@@ -2346,15 +2448,9 @@ def index():
 
                 )
 
-
             # =================================================
             # MODE 3
-            # RANDOM ENCODING
-            #
-            # IMPORTANT:
-            # This is now a radio selection and therefore
-            # cannot be active together with "all" or
-            # "selected".
+            # RANDOM
             # =================================================
 
             elif selection_mode == "random":
@@ -2375,12 +2471,14 @@ def index():
 
                 )
 
-
-            # ------------------------------------------------
+            # =================================================
             # SINGLE LINE
-            # ------------------------------------------------
+            # =================================================
 
-            if single_line:
+            if (
+                result is not None
+                and single_line
+            ):
 
                 result = (
                     result
@@ -2388,6 +2486,9 @@ def index():
                     .replace("\n", "")
                 )
 
+        # ====================================================
+        # ERRORS
+        # ====================================================
 
         except UnicodeEncodeError:
 
@@ -2399,7 +2500,6 @@ def index():
 
             result = None
 
-
         except LookupError:
 
             error = (
@@ -2409,59 +2509,187 @@ def index():
 
             result = None
 
-
         except Exception as exc:
 
             error = str(exc)
 
             result = None
 
+        # ====================================================
+        # SAVE DATA BEFORE REDIRECT
+        #
+        # This is the important PRG part.
+        # ====================================================
+
+        session["form_data"] = {
+
+            "text": text,
+
+            "charset": charset,
+
+            "method": method,
+
+            "selection_mode": selection_mode,
+
+            "selected_items": selected_items,
+
+            "spaces_after_word": spaces_after_word,
+
+            "space_hex": space_hex,
+
+            "single_line": single_line,
+
+            "word_length": word_length,
+
+            "random_percentage": random_percentage,
+        }
+
+        session["result"] = result
+
+        session["error"] = error
+
+        # ====================================================
+        # REDIRECT AFTER POST
+        # ====================================================
+
+        return redirect(
+            url_for("index")
+        )
 
     # ========================================================
-    # RENDER PAGE
+    # GET
+    # ========================================================
+
+    form_data = session.pop(
+        "form_data",
+        None
+    )
+
+    result = session.pop(
+        "result",
+        None
+    )
+
+    error = session.pop(
+        "error",
+        None
+    )
+
+    # ========================================================
+    # FIRST PAGE LOAD
+    # ========================================================
+
+    if form_data is None:
+
+        form_data = DEFAULT_FORM_DATA.copy()
+
+    # ========================================================
+    # RENDER
     # ========================================================
 
     return render_template_string(
 
         HTML,
 
-        text=text,
+        # ----------------------------------------------------
+        # FORM DATA
+        # ----------------------------------------------------
 
-        charset=charset,
+        text=form_data.get(
+            "text",
+            ""
+        ),
 
-        method=method,
+        charset=form_data.get(
+            "charset",
+            "utf-8"
+        ),
 
-        selection_mode=selection_mode,
+        method=form_data.get(
+            "method",
+            "q"
+        ),
 
-        selected_items=selected_items,
+        selection_mode=form_data.get(
+            "selection_mode",
+            "all"
+        ),
 
-        spaces_after_word=spaces_after_word,
+        selected_items=form_data.get(
+            "selected_items",
+            ""
+        ),
 
-        space_hex=space_hex,
+        spaces_after_word=form_data.get(
+            "spaces_after_word",
+            0
+        ),
 
-        single_line=single_line,
+        space_hex=form_data.get(
+            "space_hex",
+            False
+        ),
 
-        word_length=word_length,
+        single_line=form_data.get(
+            "single_line",
+            True
+        ),
 
-        random_percentage=random_percentage,
+        word_length=form_data.get(
+            "word_length",
+            75
+        ),
+
+        random_percentage=form_data.get(
+            "random_percentage",
+            50
+        ),
+
+        # ----------------------------------------------------
+        # RESULT
+        # ----------------------------------------------------
 
         result=result,
 
         error=error,
 
+        # ----------------------------------------------------
+        # OPTIONS
+        # ----------------------------------------------------
+
         charsets=CHARSETS,
 
         methods=METHODS,
 
+        # ----------------------------------------------------
+        # DISPLAY NAMES
+        # ----------------------------------------------------
+
         charset_name=CHARSETS.get(
-            charset,
-            charset
+            form_data.get(
+                "charset",
+                "utf-8"
+            ),
+            form_data.get(
+                "charset",
+                "utf-8"
+            )
         ),
 
         method_name=METHODS.get(
-            method,
-            method
+            form_data.get(
+                "method",
+                "q"
+            ),
+            form_data.get(
+                "method",
+                "q"
+            )
         ),
+
+        # ----------------------------------------------------
+        # OUTPUT LENGTH
+        # ----------------------------------------------------
 
         output_length=(
             len(result)
@@ -2472,19 +2700,21 @@ def index():
     )
 
 
-
 # ============================================================
 # START FLASK
 # ============================================================
 
 if __name__ == "__main__":
 
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000
+        )
+    )
+
     app.run(
-
-        host="127.0.0.1",
-
-        port=5000,
-
-        debug=True
-
+        host="0.0.0.0",
+        port=port,
+        debug=False
     )
