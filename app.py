@@ -1,31 +1,14 @@
-import os
+from flask import Flask, request, render_template_string
 import base64
 import html
 import json
 import urllib.parse
 import re
 import random
-
-from flask import (
-    Flask,
-    request,
-    render_template_string,
-    redirect,
-    url_for,
-    session
-)
+import os
 
 
 app = Flask(__name__)
-
-# ============================================================
-# SECRET KEY
-# ============================================================
-
-app.secret_key = os.environ.get(
-    "SECRET_KEY",
-    "change-this-secret-key"
-)
 
 
 # ============================================================
@@ -44,6 +27,7 @@ CHARSETS = {
     "iso-8859-7": "ISO-8859-7",
     "cp1252": "Windows-1252",
     "cp1251": "Windows-1251",
+    "koi8-r": "KOI8-R",
     "shift_jis": "Shift_JIS",
     "euc_jp": "EUC-JP",
     "gb2312": "GB2312",
@@ -75,8 +59,25 @@ METHODS = {
 # ============================================================
 
 CODECS = {
-    key: key
-    for key in CHARSETS
+    "utf-8": "utf-8",
+    "utf-16-le": "utf-16-le",
+    "utf-16-be": "utf-16-be",
+    "utf-32-le": "utf-32-le",
+    "utf-32-be": "utf-32-be",
+    "ascii": "ascii",
+    "iso-8859-1": "iso-8859-1",
+    "iso-8859-2": "iso-8859-2",
+    "iso-8859-7": "iso-8859-7",
+    "cp1252": "cp1252",
+    "cp1251": "cp1251",
+    "koi8-r": "koi8-r",
+    "shift_jis": "shift_jis",
+    "euc_jp": "euc_jp",
+    "gb2312": "gb2312",
+    "gbk": "gbk",
+    "gb18030": "gb18030",
+    "big5": "big5",
+    "euc_kr": "euc_kr",
 }
 
 
@@ -182,20 +183,12 @@ def encode_other(
         CODECS[charset]
     )
 
-    # --------------------------------------------------------
-    # URL
-    # --------------------------------------------------------
-
     if method == "url":
 
         return urllib.parse.quote(
-            text,
+            data,
             safe=""
         )
-
-    # --------------------------------------------------------
-    # HTML
-    # --------------------------------------------------------
 
     if method == "html":
 
@@ -203,17 +196,9 @@ def encode_other(
             text
         )
 
-    # --------------------------------------------------------
-    # HEX
-    # --------------------------------------------------------
-
     if method == "hex":
 
         return data.hex(" ")
-
-    # --------------------------------------------------------
-    # UNICODE
-    # --------------------------------------------------------
 
     if method == "unicode":
 
@@ -222,20 +207,12 @@ def encode_other(
             for c in text
         )
 
-    # --------------------------------------------------------
-    # JSON
-    # --------------------------------------------------------
-
     if method == "json":
 
         return json.dumps(
             text,
             ensure_ascii=True
         )
-
-    # --------------------------------------------------------
-    # PUNYCODE
-    # --------------------------------------------------------
 
     if method == "punycode":
 
@@ -294,7 +271,6 @@ def encode_selected_items(
 ):
 
     if not selected_items.strip():
-
         return text
 
     items = [
@@ -304,10 +280,8 @@ def encode_selected_items(
     ]
 
     if not items:
-
         return text
 
-    # Longest items first.
     items.sort(
         key=len,
         reverse=True
@@ -318,9 +292,7 @@ def encode_selected_items(
         for item in items
     )
 
-    regex = re.compile(
-        pattern
-    )
+    regex = re.compile(pattern)
 
     def replacement(match):
 
@@ -352,10 +324,6 @@ def encode_random_selected_items(
     random_percentage=50
 ):
 
-    # --------------------------------------------------------
-    # LIMIT RANDOM PERCENTAGE
-    # --------------------------------------------------------
-
     random_percentage = max(
         1,
         min(
@@ -365,8 +333,7 @@ def encode_random_selected_items(
     )
 
     # ========================================================
-    # CASE 1
-    # SPECIFIC ITEMS WERE ENTERED
+    # SPECIFIC ITEMS
     # ========================================================
 
     if selected_items.strip():
@@ -378,7 +345,6 @@ def encode_random_selected_items(
         ]
 
         if not items:
-
             return text
 
         items.sort(
@@ -391,9 +357,7 @@ def encode_random_selected_items(
             for item in items
         )
 
-        regex = re.compile(
-            pattern
-        )
+        regex = re.compile(pattern)
 
         def replacement(match):
 
@@ -421,8 +385,7 @@ def encode_random_selected_items(
         )
 
     # ========================================================
-    # CASE 2
-    # NO SPECIFIC ITEMS
+    # AUTOMATIC WORD SELECTION
     # ========================================================
 
     word_pattern = r"\b[\w]+\b"
@@ -431,9 +394,7 @@ def encode_random_selected_items(
 
         value = match.group(0)
 
-        # Do not encode one-character words.
         if len(value) <= 1:
-
             return value
 
         chance = random.randint(
@@ -479,12 +440,7 @@ HTML = r"""
 
 <title>Email Encoding Tool</title>
 
-
 <style>
-
-/* ==========================================================
-   GLOBAL
-   ========================================================== */
 
 * {
     box-sizing: border-box;
@@ -535,16 +491,7 @@ body {
         );
 
     background-attachment: fixed;
-
-    transition:
-        background 0.3s ease,
-        color 0.3s ease;
 }
-
-
-/* ==========================================================
-   MAIN CONTAINER
-   ========================================================== */
 
 .container {
 
@@ -586,11 +533,6 @@ body {
         blur(18px);
 }
 
-
-/* ==========================================================
-   HEADER
-   ========================================================== */
-
 .header {
 
     display: flex;
@@ -629,11 +571,6 @@ h1 {
     color: transparent;
 }
 
-
-/* ==========================================================
-   TWO COLUMN LAYOUT
-   ========================================================== */
-
 .main-grid {
 
     display: grid;
@@ -649,14 +586,8 @@ h1 {
 
 .left-panel,
 .right-panel {
-
     min-width: 0;
 }
-
-
-/* ==========================================================
-   LABELS
-   ========================================================== */
 
 label {
 
@@ -672,11 +603,6 @@ label {
 
     font-size: 14px;
 }
-
-
-/* ==========================================================
-   INPUTS
-   ========================================================== */
 
 textarea,
 select,
@@ -749,11 +675,6 @@ input[type="checkbox"] {
     accent-color: #6366f1;
 }
 
-
-/* ==========================================================
-   BOX
-   ========================================================== */
-
 .box {
 
     margin-top: 20px;
@@ -796,11 +717,6 @@ input[type="checkbox"] {
     color: #cbd5e1;
 }
 
-
-/* ==========================================================
-   RANDOM SETTINGS
-   ========================================================== */
-
 .random-settings {
 
     margin-top: 12px;
@@ -816,11 +732,6 @@ input[type="checkbox"] {
     background:
         rgba(76, 29, 149, 0.12);
 }
-
-
-/* ==========================================================
-   BUTTONS
-   ========================================================== */
 
 button {
 
@@ -894,11 +805,6 @@ button:active {
         rgba(0, 0, 0, 0.20);
 }
 
-
-/* ==========================================================
-   RESULT HEADER
-   ========================================================== */
-
 .result-header {
 
     display: flex;
@@ -913,14 +819,8 @@ button:active {
 }
 
 .result-header label {
-
     margin: 0;
 }
-
-
-/* ==========================================================
-   RESULT
-   ========================================================== */
 
 pre {
 
@@ -962,11 +862,6 @@ pre {
     margin: 0;
 }
 
-
-/* ==========================================================
-   HELP
-   ========================================================== */
-
 .help {
 
     color: #94a3b8;
@@ -977,11 +872,6 @@ pre {
 
     line-height: 1.5;
 }
-
-
-/* ==========================================================
-   ERROR
-   ========================================================== */
 
 .error {
 
@@ -1000,11 +890,6 @@ pre {
 
     border-radius: 8px;
 }
-
-
-/* ==========================================================
-   THEME BUTTON
-   ========================================================== */
 
 .theme-toggle {
 
@@ -1046,14 +931,8 @@ pre {
 }
 
 .theme-toggle:hover {
-
     transform: none;
 }
-
-
-/* ==========================================================
-   LIGHT MODE
-   ========================================================== */
 
 body.light-mode {
 
@@ -1094,7 +973,6 @@ body.light-mode .container {
 }
 
 body.light-mode label {
-
     color: #1e293b;
 }
 
@@ -1136,7 +1014,6 @@ body.light-mode .option label {
 }
 
 body.light-mode .help {
-
     color: #64748b;
 }
 
@@ -1185,20 +1062,12 @@ body.light-mode .error {
     border-color: #fecdd3;
 }
 
-
-/* ==========================================================
-   SCROLLBAR
-   ========================================================== */
-
 ::-webkit-scrollbar {
-
     width: 8px;
-
     height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-
     background:
         rgba(15, 23, 42, 0.5);
 }
@@ -1211,19 +1080,12 @@ body.light-mode .error {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-
     background: #64748b;
 }
-
-
-/* ==========================================================
-   MOBILE
-   ========================================================== */
 
 @media (max-width: 850px) {
 
     body {
-
         padding: 10px;
     }
 
@@ -1238,12 +1100,10 @@ body.light-mode .error {
     }
 
     .main-grid {
-
         grid-template-columns: 1fr;
     }
 
     h1 {
-
         font-size: 23px;
     }
 
@@ -1255,12 +1115,10 @@ body.light-mode .error {
     }
 
     button {
-
         width: 100%;
     }
 
     .copy {
-
         width: auto;
     }
 
@@ -1276,13 +1134,7 @@ body.light-mode .error {
 
 </head>
 
-
 <body>
-
-
-<!-- ========================================================
-     THEME TOGGLE
-     ======================================================== -->
 
 <button
     type="button"
@@ -1293,9 +1145,7 @@ body.light-mode .error {
 ☀️ Light Mode
 </button>
 
-
 <div class="container">
-
 
 <div class="header">
 
@@ -1305,22 +1155,11 @@ body.light-mode .error {
 
 </div>
 
-
 <div class="main-grid">
-
-
-<!-- ========================================================
-     LEFT SIDE - INPUTS
-     ======================================================== -->
 
 <div class="left-panel">
 
-
-<form
-    method="POST"
-    id="encodeForm"
->
-
+<form method="POST">
 
 <label>
 Input sentence
@@ -1375,10 +1214,6 @@ Encoding Format
 
 </select>
 
-
-<!-- ========================================================
-     ENCODING SELECTION
-     ======================================================== -->
 
 <div class="box">
 
@@ -1461,10 +1296,6 @@ the complete sentence are automatically selected.
 </div>
 
 
-<!-- ========================================================
-     RANDOM PERCENTAGE
-     ======================================================== -->
-
 <div
     class="random-settings"
     id="randomSettings"
@@ -1502,10 +1333,6 @@ items will be encoded.
 </div>
 
 
-<!-- ========================================================
-     SELECTED ITEMS
-     ======================================================== -->
-
 <label>
 Specific words / letters / special characters
 </label>
@@ -1532,10 +1359,6 @@ encoded throughout the sentence.
 </div>
 
 
-<!-- ========================================================
-     SPACES
-     ======================================================== -->
-
 <label>
 Spaces after each word
 </label>
@@ -1557,12 +1380,7 @@ Set to 0 if you do not want additional spaces.
 </div>
 
 
-<!-- ========================================================
-     OPTIONS
-     ======================================================== -->
-
 <div class="box">
-
 
 <div class="option">
 
@@ -1609,10 +1427,6 @@ Single line output
 </div>
 
 
-<!-- ========================================================
-     WORD LENGTH
-     ======================================================== -->
-
 <label>
 Encoded Word Length
 </label>
@@ -1634,33 +1448,18 @@ Maximum encoded word length setting.
 </div>
 
 
-<!-- ========================================================
-     ENCODE BUTTON
-     ======================================================== -->
-
-<button
-    type="submit"
-    id="encodeButton"
->
+<button type="submit">
 Encode
 </button>
 
-
 </form>
-
 
 </div>
 
 
-<!-- ========================================================
-     RIGHT SIDE - RESULT
-     ======================================================== -->
-
 <div class="right-panel">
 
-
 {% if result is not none %}
-
 
 <div class="result-header">
 
@@ -1684,16 +1483,13 @@ Copy Result
 
 <div class="box">
 
-
 <strong>
 Encoding:
 </strong>
 
 {{ method_name }}
 
-
 <br><br>
-
 
 <strong>
 Character set:
@@ -1701,9 +1497,7 @@ Character set:
 
 {{ charset_name }}
 
-
 <br><br>
-
 
 <strong>
 Selection mode:
@@ -1723,9 +1517,7 @@ Specific words / characters
 
 {% endif %}
 
-
 <br><br>
-
 
 <strong>
 Selected items:
@@ -1733,9 +1525,7 @@ Selected items:
 
 {{ selected_items if selected_items else "Automatic word selection" }}
 
-
 <br><br>
-
 
 <strong>
 Random percentage:
@@ -1743,9 +1533,7 @@ Random percentage:
 
 {{ random_percentage }}%
 
-
 <br><br>
-
 
 <strong>
 Spaces after each word:
@@ -1753,9 +1541,7 @@ Spaces after each word:
 
 {{ spaces_after_word }}
 
-
 <br><br>
-
 
 <strong>
 Output length:
@@ -1763,12 +1549,10 @@ Output length:
 
 {{ output_length }}
 
-
 </div>
 
 
 {% else %}
-
 
 <div class="result-header">
 
@@ -1778,9 +1562,7 @@ Result
 
 </div>
 
-
 <pre id="result">Your encoded result will appear here.</pre>
-
 
 <div class="help">
 
@@ -1788,7 +1570,6 @@ Enter your encoding options on the left,
 then click <strong>Encode</strong>.
 
 </div>
-
 
 {% endif %}
 
@@ -1803,22 +1584,14 @@ then click <strong>Encode</strong>.
 
 {% endif %}
 
+</div>
 
 </div>
 
-
 </div>
 
-
-</div>
-
-
-<!-- ========================================================
-     JAVASCRIPT
-     ======================================================== -->
 
 <script>
-
 
 /* ==========================================================
    COPY RESULT
@@ -1835,7 +1608,6 @@ function copyResult() {
 
     const text =
         result.innerText;
-
 
     if (
         navigator.clipboard &&
@@ -1864,10 +1636,6 @@ function copyResult() {
 }
 
 
-/* ==========================================================
-   FALLBACK COPY
-   ========================================================== */
-
 function fallbackCopy(text) {
 
     const textarea =
@@ -1889,9 +1657,7 @@ function fallbackCopy(text) {
 
     try {
 
-        document.execCommand(
-            "copy"
-        );
+        document.execCommand("copy");
 
         showCopyStatus();
 
@@ -1911,16 +1677,10 @@ function fallbackCopy(text) {
 }
 
 
-/* ==========================================================
-   COPY BUTTON STATUS
-   ========================================================== */
-
 function showCopyStatus() {
 
     const buttons =
-        document.querySelectorAll(
-            ".copy"
-        );
+        document.querySelectorAll(".copy");
 
     buttons.forEach(function (button) {
 
@@ -1956,11 +1716,9 @@ function toggleTheme() {
             "themeToggle"
         );
 
-
     body.classList.toggle(
         "light-mode"
     );
-
 
     if (
         body.classList.contains(
@@ -1998,19 +1756,14 @@ function toggleTheme() {
 (function () {
 
     const savedTheme =
-        localStorage.getItem(
-            "theme"
-        );
+        localStorage.getItem("theme");
 
     const button =
         document.getElementById(
             "themeToggle"
         );
 
-
-    if (
-        savedTheme === "light"
-    ) {
+    if (savedTheme === "light") {
 
         document.body.classList.add(
             "light-mode"
@@ -2045,19 +1798,16 @@ function toggleTheme() {
             "randomSettings"
         );
 
-
     function updateRandomSettings() {
 
         if (!settings) {
             return;
         }
 
-
         const selected =
             document.querySelector(
                 'input[name="selection_mode"]:checked'
             );
-
 
         if (
             selected &&
@@ -2076,7 +1826,6 @@ function toggleTheme() {
 
     }
 
-
     radios.forEach(function (radio) {
 
         radio.addEventListener(
@@ -2086,58 +1835,11 @@ function toggleTheme() {
 
     });
 
-
     updateRandomSettings();
 
 })();
 
-
-/* ==========================================================
-   PREVENT DOUBLE CLICK / DOUBLE SUBMIT
-   ========================================================== */
-
-(function () {
-
-    const form =
-        document.getElementById(
-            "encodeForm"
-        );
-
-    const button =
-        document.getElementById(
-            "encodeButton"
-        );
-
-    if (!form || !button) {
-        return;
-    }
-
-    let submitted = false;
-
-    form.addEventListener(
-        "submit",
-        function () {
-
-            if (submitted) {
-
-                return;
-
-            }
-
-            submitted = true;
-
-            button.disabled = true;
-
-            button.innerHTML =
-                "Encoding...";
-
-        }
-    );
-
-})();
-
 </script>
-
 
 </body>
 
@@ -2146,52 +1848,7 @@ function toggleTheme() {
 
 
 # ============================================================
-# DEFAULT FORM DATA
-# ============================================================
-
-DEFAULT_FORM_DATA = {
-
-    "text": "",
-
-    "charset": "utf-8",
-
-    "method": "q",
-
-    "selection_mode": "all",
-
-    "selected_items": "",
-
-    "spaces_after_word": 0,
-
-    "space_hex": False,
-
-    "single_line": True,
-
-    "word_length": 75,
-
-    "random_percentage": 50,
-}
-
-
-# ============================================================
 # FLASK ROUTE
-#
-# IMPORTANT:
-#
-# POST
-#   ↓
-# Process
-#   ↓
-# Save result to session
-#   ↓
-# Redirect
-#   ↓
-# GET
-#
-# This is called PRG:
-# POST -> Redirect -> GET
-#
-# Therefore browser refresh will NOT resend POST.
 # ============================================================
 
 @app.route(
@@ -2200,59 +1857,65 @@ DEFAULT_FORM_DATA = {
 )
 def index():
 
+    text = ""
+
+    charset = "utf-8"
+
+    method = "q"
+
+    selection_mode = "all"
+
+    selected_items = ""
+
+    spaces_after_word = 0
+
+    space_hex = False
+
+    single_line = True
+
+    word_length = 75
+
+    random_percentage = 50
+
+    result = None
+
+    error = None
+
+
     # ========================================================
     # POST
     # ========================================================
 
     if request.method == "POST":
 
-        # ----------------------------------------------------
-        # INPUT TEXT
-        # ----------------------------------------------------
-
         text = request.form.get(
             "text",
             ""
         )
-
-        # ----------------------------------------------------
-        # CHARACTER SET
-        # ----------------------------------------------------
 
         charset = request.form.get(
             "charset",
             "utf-8"
         )
 
-        # ----------------------------------------------------
-        # METHOD
-        # ----------------------------------------------------
-
         method = request.form.get(
             "method",
             "q"
         )
-
-        # ----------------------------------------------------
-        # SELECTION MODE
-        # ----------------------------------------------------
 
         selection_mode = request.form.get(
             "selection_mode",
             "all"
         )
 
-        # ----------------------------------------------------
-        # SELECTED ITEMS
-        # ----------------------------------------------------
-
         selected_items = request.form.get(
             "selected_items",
             ""
         )
 
+
         # ----------------------------------------------------
-        # CHECKBOX: SPACE HEX
+        # CHECKBOXES
         # ----------------------------------------------------
 
         space_hex = (
@@ -2261,18 +1924,15 @@ def index():
             ) == "on"
         )
 
-        # ----------------------------------------------------
-        # CHECKBOX: SINGLE LINE
-        # ----------------------------------------------------
-
         single_line = (
             request.form.get(
                 "single_line"
             ) == "on"
         )
 
+
         # ----------------------------------------------------
-        # SPACES AFTER WORD
+        # SPACES
         # ----------------------------------------------------
 
         try:
@@ -2284,12 +1944,10 @@ def index():
                 )
             )
 
-        except (
-            ValueError,
-            TypeError
-        ):
+        except (ValueError, TypeError):
 
             spaces_after_word = 0
+
 
         # ----------------------------------------------------
         # WORD LENGTH
@@ -2304,12 +1962,10 @@ def index():
                 )
             )
 
-        except (
-            ValueError,
-            TypeError
-        ):
+        except (ValueError, TypeError):
 
             word_length = 75
+
 
         # ----------------------------------------------------
         # RANDOM PERCENTAGE
@@ -2324,16 +1980,14 @@ def index():
                 )
             )
 
-        except (
-            ValueError,
-            TypeError
-        ):
+        except (ValueError, TypeError):
 
             random_percentage = 50
 
-        # ====================================================
+
+        # ----------------------------------------------------
         # LIMIT VALUES
-        # ====================================================
+        # ----------------------------------------------------
 
         spaces_after_word = max(
             0,
@@ -2359,6 +2013,7 @@ def index():
             )
         )
 
+
         # ====================================================
         # VALIDATE SELECTION MODE
         # ====================================================
@@ -2371,6 +2026,7 @@ def index():
 
             selection_mode = "all"
 
+
         # ====================================================
         # VALIDATE CHARSET
         # ====================================================
@@ -2378,6 +2034,7 @@ def index():
         if charset not in CHARSETS:
 
             charset = "utf-8"
+
 
         # ====================================================
         # VALIDATE METHOD
@@ -2387,19 +2044,12 @@ def index():
 
             method = "q"
 
+
         # ====================================================
         # ENCODE
         # ====================================================
 
-        result = None
-
-        error = None
-
         try:
-
-            # ------------------------------------------------
-            # ADD SPACES
-            # ------------------------------------------------
 
             processed_text = (
                 add_spaces_after_words(
@@ -2408,77 +2058,57 @@ def index():
                 )
             )
 
+
             # =================================================
             # MODE 1
-            # ENTIRE SENTENCE
             # =================================================
 
             if selection_mode == "all":
 
                 result = encode_text(
-
                     processed_text,
-
                     charset,
-
                     method,
-
                     space_hex
-
                 )
+
 
             # =================================================
             # MODE 2
-            # SELECTED ITEMS
             # =================================================
 
             elif selection_mode == "selected":
 
                 result = encode_selected_items(
-
                     processed_text,
-
                     selected_items,
-
                     charset,
-
                     method,
-
                     space_hex
-
                 )
+
 
             # =================================================
             # MODE 3
-            # RANDOM
             # =================================================
 
             elif selection_mode == "random":
 
                 result = encode_random_selected_items(
-
                     processed_text,
-
                     selected_items,
-
                     charset,
-
                     method,
-
                     space_hex,
-
                     random_percentage
-
                 )
 
-            # =================================================
-            # SINGLE LINE
-            # =================================================
 
-            if (
-                result is not None
-                and single_line
-            ):
+            # ------------------------------------------------
+            # SINGLE LINE
+            # ------------------------------------------------
+
+            if single_line and result is not None:
 
                 result = (
                     result
@@ -2486,9 +2116,6 @@ def index():
                     .replace("\n", "")
                 )
 
-        # ====================================================
-        # ERRORS
-        # ====================================================
 
         except UnicodeEncodeError:
 
@@ -2500,6 +2127,7 @@ def index():
 
             result = None
 
+
         except LookupError:
 
             error = (
@@ -2509,187 +2137,59 @@ def index():
 
             result = None
 
+
         except Exception as exc:
 
             error = str(exc)
 
             result = None
 
-        # ====================================================
-        # SAVE DATA BEFORE REDIRECT
-        #
-        # This is the important PRG part.
-        # ====================================================
-
-        session["form_data"] = {
-
-            "text": text,
-
-            "charset": charset,
-
-            "method": method,
-
-            "selection_mode": selection_mode,
-
-            "selected_items": selected_items,
-
-            "spaces_after_word": spaces_after_word,
-
-            "space_hex": space_hex,
-
-            "single_line": single_line,
-
-            "word_length": word_length,
-
-            "random_percentage": random_percentage,
-        }
-
-        session["result"] = result
-
-        session["error"] = error
-
-        # ====================================================
-        # REDIRECT AFTER POST
-        # ====================================================
-
-        return redirect(
-            url_for("index")
-        )
 
     # ========================================================
-    # GET
-    # ========================================================
-
-    form_data = session.pop(
-        "form_data",
-        None
-    )
-
-    result = session.pop(
-        "result",
-        None
-    )
-
-    error = session.pop(
-        "error",
-        None
-    )
-
-    # ========================================================
-    # FIRST PAGE LOAD
-    # ========================================================
-
-    if form_data is None:
-
-        form_data = DEFAULT_FORM_DATA.copy()
-
-    # ========================================================
-    # RENDER
+    # RENDER PAGE
     # ========================================================
 
     return render_template_string(
 
         HTML,
 
-        # ----------------------------------------------------
-        # FORM DATA
-        # ----------------------------------------------------
+        text=text,
 
-        text=form_data.get(
-            "text",
-            ""
-        ),
+        charset=charset,
 
-        charset=form_data.get(
-            "charset",
-            "utf-8"
-        ),
+        method=method,
 
-        method=form_data.get(
-            "method",
-            "q"
-        ),
+        selection_mode=selection_mode,
 
-        selection_mode=form_data.get(
-            "selection_mode",
-            "all"
-        ),
+        selected_items=selected_items,
 
-        selected_items=form_data.get(
-            "selected_items",
-            ""
-        ),
+        spaces_after_word=spaces_after_word,
 
-        spaces_after_word=form_data.get(
-            "spaces_after_word",
-            0
-        ),
+        space_hex=space_hex,
 
-        space_hex=form_data.get(
-            "space_hex",
-            False
-        ),
+        single_line=single_line,
 
-        single_line=form_data.get(
-            "single_line",
-            True
-        ),
+        word_length=word_length,
 
-        word_length=form_data.get(
-            "word_length",
-            75
-        ),
-
-        random_percentage=form_data.get(
-            "random_percentage",
-            50
-        ),
-
-        # ----------------------------------------------------
-        # RESULT
-        # ----------------------------------------------------
+        random_percentage=random_percentage,
 
         result=result,
 
         error=error,
 
-        # ----------------------------------------------------
-        # OPTIONS
-        # ----------------------------------------------------
-
         charsets=CHARSETS,
 
         methods=METHODS,
 
-        # ----------------------------------------------------
-        # DISPLAY NAMES
-        # ----------------------------------------------------
-
         charset_name=CHARSETS.get(
-            form_data.get(
-                "charset",
-                "utf-8"
-            ),
-            form_data.get(
-                "charset",
-                "utf-8"
-            )
+            charset,
+            charset
         ),
 
         method_name=METHODS.get(
-            form_data.get(
-                "method",
-                "q"
-            ),
-            form_data.get(
-                "method",
-                "q"
-            )
+            method,
+            method
         ),
-
-        # ----------------------------------------------------
-        # OUTPUT LENGTH
-        # ----------------------------------------------------
 
         output_length=(
             len(result)
